@@ -16,13 +16,13 @@ import datetime as dt
 import json
 import re
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Tuple
 
 
 URL_RE = re.compile(r"^https?://.+")
+MAX_TASK_ROWS = 3
 
 
 @dataclass
@@ -117,9 +117,9 @@ def ask_int(msg: str, min_v: int = 0, max_v: int = 100, default: int | None = No
         return iv
 
 
-def ask_url(msg: str) -> str:
+def ask_url(msg: str, default: str = "") -> str:
     while True:
-        v = ask(msg, required=False)
+        v = ask(msg, required=False, default=default)
         if not v or URL_RE.match(v):
             return v
         print("链接必须是完整 URL（http:// 或 https://）。")
@@ -151,6 +151,102 @@ def report_path(repo_root: Path, member_slug: str, week_start: dt.date) -> Path:
     week_end = week_start + dt.timedelta(days=6)
     folder = repo_root / "kb" / "weekly_report_submission" / f"{week_start.year:04d}" / f"{week_start.month:02d}" / f"{underscore(week_start)}_{underscore(week_end)}" / "personal"
     return folder / f"{member_slug}_weekly_report_{underscore(week_start)}_{underscore(week_end)}.md"
+
+
+def previous_week_report_path(repo_root: Path, member_slug: str, week_start: dt.date) -> Path:
+    return report_path(repo_root, member_slug, week_start - dt.timedelta(days=7))
+
+
+def render_report_template(template_text: str, member: Member, week_start: dt.date) -> str:
+    week_end = week_start + dt.timedelta(days=6)
+    week_id = week_str(week_start)
+    return (
+        template_text.replace("<week_id>", week_id)
+        .replace("<week_start>", str(week_start))
+        .replace("<week_end>", str(week_end))
+        .replace("<member_name>", member.member_name_zh)
+        .replace("<team_category>", member.team_category)
+        .replace("<direction>", member.direction)
+        .replace("<是/否>", member.is_direction_lead)
+    )
+
+
+def ensure_report_file(repo_root: Path, member: Member, week_start: dt.date) -> Tuple[Path, bool]:
+    rpt = report_path(repo_root, member.member_slug, week_start)
+    if rpt.exists():
+        return rpt, False
+
+    template_path = repo_root / "templates" / "weekly_report_submission" / "personal_weekly_report_template.md"
+    if not template_path.exists():
+        raise ValidationError(f"周报模板不存在，无法自动建档：{template_path}")
+
+    template_text = template_path.read_text(encoding="utf-8")
+    rendered = render_report_template(template_text, member, week_start)
+    rpt.parent.mkdir(parents=True, exist_ok=True)
+    rpt.write_text(rendered, encoding="utf-8")
+    return rpt, True
+
+
+def parse_table_cells(line: str) -> List[str]:
+    s = line.strip()
+    if not (s.startswith("|") and s.endswith("|")):
+        return []
+    return [x.strip() for x in s.strip("|").split("|")]
+
+
+def parse_section_rows(lines: List[str], section_title: str) -> List[List[str]]:
+    sec_idx = find_line_index(lines, 0, section_title)
+    header_idx = find_line_index(lines, sec_idx, "| 任务编号 |")
+    row_idx = header_idx + 2
+    rows: List[List[str]] = []
+    while row_idx < len(lines) and lines[row_idx].startswith("| 任务"):
+        cells = parse_table_cells(lines[row_idx])
+        if cells:
+            rows.append(cells)
+        row_idx += 1
+    return rows
+
+
+def bootstrap_from_previous_report(repo_root: Path, member_slug: str, week_start: dt.date) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    prev = previous_week_report_path(repo_root, member_slug, week_start)
+    if not prev.exists():
+        return [], []
+
+    lines = prev.read_text(encoding="utf-8").splitlines()
+    rows_31 = parse_section_rows(lines, "### 3.1 下周工作计划概述（对内）")
+    rows_32 = parse_section_rows(lines, "### 3.2 下周工作计划概述（对外）")
+
+    # 3.x 列结构：任务编号, 任务事项, 下周目标说明, 预计完成率, 依赖, 风险, 预计成果物, 资产链接, 预计成果物链接
+    prefill_21: List[Dict[str, str]] = []
+    prefill_22: List[Dict[str, str]] = []
+
+    for cells in rows_31:
+        if len(cells) >= 2 and cells[1].strip():
+            prefill_21.append(
+                {
+                    "task_item": cells[1].strip(),
+                    "previous_goal": cells[2].strip() if len(cells) > 2 else "",
+                    "previous_dependency": cells[4].strip() if len(cells) > 4 else "",
+                    "previous_risk": cells[5].strip() if len(cells) > 5 else "",
+                    "previous_asset_url": cells[7].strip() if len(cells) > 7 else "",
+                    "previous_deliverable_url": cells[8].strip() if len(cells) > 8 else "",
+                }
+            )
+
+    for cells in rows_32:
+        if len(cells) >= 2 and cells[1].strip():
+            prefill_22.append(
+                {
+                    "task_item": cells[1].strip(),
+                    "previous_goal": cells[2].strip() if len(cells) > 2 else "",
+                    "previous_dependency": cells[4].strip() if len(cells) > 4 else "",
+                    "previous_risk": cells[5].strip() if len(cells) > 5 else "",
+                    "previous_asset_url": cells[7].strip() if len(cells) > 7 else "",
+                    "previous_deliverable_url": cells[8].strip() if len(cells) > 8 else "",
+                }
+            )
+
+    return prefill_21[:MAX_TASK_ROWS], prefill_22[:MAX_TASK_ROWS]
 
 
 def find_line_index(lines: List[str], start: int, prefix: str) -> int:
@@ -282,22 +378,46 @@ def validate_task31(rows: List[Task31Row], section_name: str) -> None:
                 raise ValidationError(f"{section_name} 第{i}行{label}格式非法。")
 
 
-def collect_task21(section_name: str) -> List[Task21Row]:
+def collect_task21(section_name: str, prefills: List[Dict[str, str]] | None = None) -> List[Task21Row]:
     print(f"\n开始填写 {section_name}")
-    n = ask_int("请输入任务数量(0-3)", 0, 3, 1)
+    use_prefill = False
+    prefills = prefills or []
+    if prefills:
+        print(f"检测到上周计划可继承 {len(prefills)} 条。")
+        yn = ask("是否将上周下周计划自动贴到本周计划并逐条更新进度？(Y/n)", default="Y")
+        use_prefill = yn.strip().lower() in {"", "y", "yes"}
+
+    n = len(prefills) if use_prefill else ask_int("请输入任务数量(0-3)", 0, 3, 1)
     rows: List[Task21Row] = []
     for i in range(n):
         print(f"\n{section_name} - 任务{i+1}")
-        task_item = ask("任务事项", required=True)
-        summary = ask("本周进度总结", required=False)
+        if use_prefill:
+            p = prefills[i]
+            print(f"继承任务事项：{p.get('task_item', '')}")
+            if p.get("previous_goal"):
+                print(f"上周计划目标参考：{p.get('previous_goal', '')}")
+            task_item = ask("任务事项", required=True, default=p.get("task_item", ""))
+            summary = ask("本周进度总结", required=False, default="延续上周计划执行，已按实际进展更新。")
+            dependency_default = p.get("previous_dependency", "")
+            risk_default = p.get("previous_risk", "")
+            asset_default = p.get("previous_asset_url", "")
+            deliverable_default = p.get("previous_deliverable_url", "")
+        else:
+            task_item = ask("任务事项", required=True)
+            summary = ask("本周进度总结", required=False)
+            dependency_default = ""
+            risk_default = ""
+            asset_default = ""
+            deliverable_default = ""
+
         rate = ask_int("完成率(0-100)", 0, 100)
         deviation_reason = ""
         if rate < 100:
             deviation_reason = ask("状态偏差原因(完成率<100必填)", required=True)
-        dependency = ask("依赖(可空)")
-        risk = ask("风险(可空)")
-        asset_url = ask_url("设计与执行资产目录链接(可空, 需http/https)")
-        deliverable_url = ask_url("成果物链接(可空, 需http/https)")
+        dependency = ask("依赖(可空)", default=dependency_default)
+        risk = ask("风险(可空)", default=risk_default)
+        asset_url = ask_url("设计与执行资产目录链接(可空, 需http/https)", default=asset_default)
+        deliverable_url = ask_url("成果物链接(可空, 需http/https)", default=deliverable_default)
         rows.append(
             Task21Row(task_item, summary, rate, deviation_reason, dependency, risk, asset_url, deliverable_url)
         )
@@ -349,7 +469,7 @@ def collect_list(section_name: str, hint: str) -> List[str]:
     return out
 
 
-def run_git(repo_root: Path, rel_report_path: Path, member_slug: str, week_id: str) -> None:
+def sync_latest_develop(repo_root: Path) -> None:
     def run(cmd: List[str]) -> None:
         print("$", " ".join(cmd))
         r = subprocess.run(cmd, cwd=str(repo_root), text=True)
@@ -357,6 +477,17 @@ def run_git(repo_root: Path, rel_report_path: Path, member_slug: str, week_id: s
             raise ValidationError(f"Git 执行失败：{' '.join(cmd)}")
 
     run(["git", "fetch", "origin", "develop"])
+    run(["git", "checkout", "develop"])
+    run(["git", "pull", "--rebase", "origin", "develop"])
+
+
+def run_git(repo_root: Path, rel_report_path: Path, member_slug: str, week_id: str) -> None:
+    def run(cmd: List[str]) -> None:
+        print("$", " ".join(cmd))
+        r = subprocess.run(cmd, cwd=str(repo_root), text=True)
+        if r.returncode != 0:
+            raise ValidationError(f"Git 执行失败：{' '.join(cmd)}")
+
     run(["git", "checkout", "develop"])
     run(["git", "add", str(rel_report_path)])
 
@@ -367,7 +498,6 @@ def run_git(repo_root: Path, rel_report_path: Path, member_slug: str, week_id: s
         return
 
     run(["git", "commit", "-m", f"kb(weekly_report): update report for {member_slug} {week_id}"])
-    run(["git", "pull", "--rebase", "origin", "develop"])
     run(["git", "push", "origin", "develop"])
 
 
@@ -388,21 +518,28 @@ def main() -> int:
     if not member_registry.exists():
         raise ValidationError(f"未找到成员注册表：{member_registry}")
 
+    print("\n步骤：先同步最新 develop 分支")
+    sync_latest_develop(repo_root)
+
     member = load_member(member_registry, args.member_slug)
-    rpt = report_path(repo_root, args.member_slug, week_start)
-    if not rpt.exists():
-        raise ValidationError(f"周报文件不存在，请先建档：{rpt}")
+    rpt, created_new = ensure_report_file(repo_root, member, week_start)
+
+    prefill_21: List[Dict[str, str]] = []
+    prefill_22: List[Dict[str, str]] = []
+    if created_new:
+        prefill_21, prefill_22 = bootstrap_from_previous_report(repo_root, args.member_slug, week_start)
 
     print("=" * 72)
     print("fill_weekly_report 自动化流程")
     print(f"成员：{member.member_name_zh} ({member.member_slug})")
     print(f"周次：{week_id} / {week_start} ~ {week_end}")
     print(f"目标文件：{rpt}")
+    print(f"建档状态：{'新建' if created_new else '已存在'}")
     print(f"自动提交：{'否' if args.no_auto_commit else '是'}")
     print("=" * 72)
 
-    rows_21 = collect_task21("2.1 本周工作总结概述（对内）")
-    rows_22 = collect_task21("2.2 本周工作总结概述（对外）")
+    rows_21 = collect_task21("2.1 本周工作总结概述（对内）", prefills=prefill_21)
+    rows_22 = collect_task21("2.2 本周工作总结概述（对外）", prefills=prefill_22)
     exp = collect_list("2.3 本周经验总结与复盘", "请输入每条经验；直接回车结束。")
     rows_31 = collect_task31("3.1 下周工作计划概述（对内）")
     rows_32 = collect_task31("3.2 下周工作计划概述（对外）")

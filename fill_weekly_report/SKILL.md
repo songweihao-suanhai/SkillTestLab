@@ -3,14 +3,14 @@
 ## 1. 基本信息
 
 - **技能名称**：fill_weekly_report
-- **版本**：v1.0.0
+- **版本**：v1.1.0
 - **默认用户上下文**：
   - `member_slug`: songweihao
   - 成员信息：宋维豪 / 计算流体组 / 非方向负责人（来自注册表）
 
 ## 2. 技能描述
 
-基于团队周报规范，交互式填写并更新个人周报文件；支持已填内容检测、按行修改/重填/追加、硬性校验、可选 Git 提交推送、异常提示与缓存恢复。
+基于团队周报规范，采用“系统逐问、用户逐答”的问答式交互填写并更新个人周报文件；支持新周报自动建档、上周计划继承、硬性校验、可选 Git 提交推送、异常提示与缓存恢复。
 
 当前仓库已提供可执行入口：
 
@@ -113,7 +113,8 @@
 ### Step 3. 文件定位与存在性检查
 
 1. 按路径规则拼接个人周报文件路径。
-2. 若文件不存在：终止并提示“请先运行建档脚本生成周报文件”。
+2. 若文件不存在：自动使用 `personal_weekly_report_template.md` 建档并填充基础信息。
+3. 新建周报时，尝试读取“上一周个人周报”中的 `3.1/3.2` 任务，作为当前周报 `2.1/2.2` 的候选继承任务。
 
 ### Step 4. 读取并解析现有内容
 
@@ -140,6 +141,12 @@
 4. 退出
 
 ### Step 6. 区块交互填写（固定顺序）
+
+交互形式要求：
+
+- 系统必须逐字段发问（不要求用户复制整段模板后修改）。
+- 用户每回答一项，系统即时做字段级校验并继续下一问。
+- 新周报场景下，若检测到可继承任务，系统先询问“是否继承”，再逐条询问本周实际进展。
 
 #### 6a) 2.1 本周对内
 
@@ -234,19 +241,22 @@
 
 触发条件：`auto_commit=true` 或用户确认“是”。
 
-执行顺序固定：
+执行顺序固定（先拉取再交互，交互后提交）：
 
-1. `git fetch origin develop`
-2. 切到本地 `develop`（不存在则从 `origin/develop` 创建）
-3. `git pull origin develop --rebase`
-4. `git add <周报相对路径>`
-5. 判断提交类型：
+1. 启动阶段先执行：
+	- `git fetch origin develop`
+	- 切到本地 `develop`（不存在则从 `origin/develop` 创建）
+	- `git pull origin develop --rebase`
+2. 交互阶段新增/修改周报文件。
+3. 交互结束后执行：
+	- `git add <周报相对路径>`
+4. 判断提交类型：
 	- 该文件无历史：`add`
 	- 该文件已有历史：`update`
-6. 生成提交信息：
+5. 生成提交信息：
 	- `kb(weekly_report): <add|update> report for <member_slug> <YYYY-Www>`
-7. `git commit -m "..."`
-8. `git push origin develop`
+6. `git commit -m "..."`
+7. `git push origin develop`
 
 任何 Git 步骤失败：仅报错，不回滚已写回文件。
 
@@ -322,7 +332,7 @@
 
 ```bash
 python SkillTestLab/fill_weekly_report/fill_weekly_report.py \
-	--repo-root /path/to/tiangong \
+	--repo-root /home/peter/repositories/tiangong \
 	--member-slug songweihao \
 	--week-start 2026-04-20
 ```
@@ -331,7 +341,7 @@ python SkillTestLab/fill_weekly_report/fill_weekly_report.py \
 
 ```bash
 python SkillTestLab/fill_weekly_report/fill_weekly_report.py \
-	--repo-root /path/to/tiangong \
+	--repo-root /home/peter/repositories/tiangong \
 	--member-slug songweihao \
 	--week-start 2026-04-20 \
 	--no-auto-commit
@@ -339,9 +349,11 @@ python SkillTestLab/fill_weekly_report/fill_weekly_report.py \
 
 ### 12.3 行为约束
 
-1. 固定交互顺序：`2.1 -> 2.2 -> 2.3 -> 3.1 -> 3.2 -> 4 -> 5(负责人)`。
-2. 写回后默认执行 Git：`fetch -> checkout develop -> add -> commit -> pull --rebase -> push`。
-3. 若暂存区无改动，跳过提交与推送并给出提示。
+1. 执行技能时必须先同步最新 `develop`：`fetch -> checkout develop -> pull --rebase`。
+2. 固定交互顺序：`2.1 -> 2.2 -> 2.3 -> 3.1 -> 3.2 -> 4 -> 5(负责人)`。
+3. 交互过程中完成周报文件新增/修改，交互结束后执行 `add -> commit -> push`。
+4. 若暂存区无改动，跳过提交与推送并给出提示。
+5. 新周报生成时，默认尝试将上周 `3.1` 映射到本周 `2.1`、上周 `3.2` 映射到本周 `2.2`，并通过问答更新实际完成率与进度。
 
 ## 11. 非功能要求
 
