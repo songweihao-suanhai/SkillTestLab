@@ -483,13 +483,12 @@ def collect_list(section_name: str, hint: str) -> List[str]:
 
 
 def sync_latest_develop(repo_root: Path) -> None:
-    run_cmd(repo_root, ["git", "fetch", "origin", "develop"], print_cmd=True)
-    run_cmd(repo_root, ["git", "checkout", "develop"], print_cmd=True)
+    run_cmd(repo_root, ["git", "switch", "develop"], print_cmd=True)
     run_cmd(repo_root, ["git", "pull", "--rebase", "origin", "develop"], print_cmd=True)
 
 
 def run_git(repo_root: Path, rel_report_path: Path, member_slug: str, week_id: str) -> None:
-    run_cmd(repo_root, ["git", "checkout", "develop"], print_cmd=True)
+    run_cmd(repo_root, ["git", "switch", "develop"], print_cmd=True)
     run_cmd(repo_root, ["git", "add", str(rel_report_path)], print_cmd=True)
 
     # 若无变更，不再提交
