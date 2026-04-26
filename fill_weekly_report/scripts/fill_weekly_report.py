@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""
-交互式填写 Tiangong 个人周报，并可自动 Git 提交推送。
-
-默认行为：
-1) 按 2.1 -> 2.2 -> 2.3 -> 3.1 -> 3.2 -> 4 -> 5(负责人) 顺序交互
-2) 完成硬性校验
-3) 写回周报文件
-4) 自动提交并推送到 develop（可通过 --no-auto-commit 关闭）
-"""
+"""交互式填写 Tiangong 个人周报，并可自动 Git 提交推送。"""
 
 from __future__ import annotations
 
@@ -23,6 +15,7 @@ from typing import Dict, List, Tuple
 
 URL_RE = re.compile(r"^https?://.+")
 MAX_TASK_ROWS = 3
+TASK_NAMES = ("任务一", "任务二", "任务三")
 
 
 @dataclass
@@ -62,6 +55,15 @@ class Task31Row:
 
 class ValidationError(Exception):
     pass
+
+
+def run_cmd(repo_root: Path, cmd: List[str], print_cmd: bool = False) -> subprocess.CompletedProcess:
+    if print_cmd:
+        print("$", " ".join(cmd))
+    r = subprocess.run(cmd, cwd=str(repo_root), text=True)
+    if r.returncode != 0:
+        raise ValidationError(f"Git 执行失败：{' '.join(cmd)}")
+    return r
 
 
 def today_week_monday(today: dt.date | None = None) -> dt.date:
@@ -302,14 +304,13 @@ def replace_bullets(
 
 
 def make_rows_21(rows: List[Task21Row]) -> List[str]:
-    names = ["任务一", "任务二", "任务三"]
     out: List[str] = []
-    for i in range(3):
+    for i in range(MAX_TASK_ROWS):
         if i < len(rows):
             r = rows[i]
             out.append(
                 "| {no} | {a} | {b} | {c} | {d} | {e} | {f} | {g} | {h} |".format(
-                    no=names[i],
+                    no=TASK_NAMES[i],
                     a=sanitize(r.task_item),
                     b=sanitize(r.summary),
                     c=r.rate,
@@ -321,14 +322,13 @@ def make_rows_21(rows: List[Task21Row]) -> List[str]:
                 )
             )
         else:
-            out.append(f"| {names[i]} |  |  |  |  |  |  |  |  |")
+            out.append(f"| {TASK_NAMES[i]} |  |  |  |  |  |  |  |  |")
     return out
 
 
 def make_rows_31(rows: List[Task31Row]) -> List[str]:
-    names = ["任务一", "任务二", "任务三"]
     out: List[str] = []
-    for i in range(3):
+    for i in range(MAX_TASK_ROWS):
         if i < len(rows):
             r = rows[i]
             risk = r.risk
@@ -336,7 +336,7 @@ def make_rows_31(rows: List[Task31Row]) -> List[str]:
                 risk = f"偏差原因：{r.deviation_reason}；风险：{risk}" if risk else f"偏差原因：{r.deviation_reason}"
             out.append(
                 "| {no} | {a} | {b} | {c} | {d} | {e} | {f} | {g} | {h} |".format(
-                    no=names[i],
+                    no=TASK_NAMES[i],
                     a=sanitize(r.task_item),
                     b=sanitize(r.goal),
                     c=r.rate,
@@ -348,34 +348,47 @@ def make_rows_31(rows: List[Task31Row]) -> List[str]:
                 )
             )
         else:
-            out.append(f"| {names[i]} |  |  |  |  |  |  |  |  |")
+            out.append(f"| {TASK_NAMES[i]} |  |  |  |  |  |  |  |  |")
     return out
 
 
-def validate_task21(rows: List[Task21Row], section_name: str) -> None:
+def validate_common_rows(
+    rows: List[object],
+    section_name: str,
+    rate_label: str,
+    deliverable_label: str,
+) -> None:
     for i, r in enumerate(rows, 1):
-        if not r.task_item.strip():
+        task_item = str(getattr(r, "task_item", "")).strip()
+        rate = int(getattr(r, "rate", -1))
+        deviation_reason = str(getattr(r, "deviation_reason", "")).strip()
+        asset_url = str(getattr(r, "asset_url", "")).strip()
+        deliverable_url = str(getattr(r, "deliverable_url", "")).strip()
+
+        if not task_item:
             raise ValidationError(f"{section_name} 第{i}行任务事项不能为空。")
-        if not (0 <= r.rate <= 100):
-            raise ValidationError(f"{section_name} 第{i}行完成率必须在 0..100。")
-        if r.rate < 100 and not r.deviation_reason.strip():
-            raise ValidationError(f"{section_name} 第{i}行完成率<100，偏差原因必填。")
-        for label, url in [("资产链接", r.asset_url), ("成果物链接", r.deliverable_url)]:
+        if not (0 <= rate <= 100):
+            raise ValidationError(f"{section_name} 第{i}行{rate_label}必须在 0..100。")
+        if rate < 100 and not deviation_reason:
+            raise ValidationError(f"{section_name} 第{i}行{rate_label}<100，偏差原因必填。")
+        for label, url in [("资产链接", asset_url), (deliverable_label, deliverable_url)]:
             if url and not URL_RE.match(url):
                 raise ValidationError(f"{section_name} 第{i}行{label}格式非法。")
+
+
+def validate_task21(rows: List[Task21Row], section_name: str) -> None:
+    validate_common_rows(rows, section_name, "完成率", "成果物链接")
 
 
 def validate_task31(rows: List[Task31Row], section_name: str) -> None:
-    for i, r in enumerate(rows, 1):
-        if not r.task_item.strip():
-            raise ValidationError(f"{section_name} 第{i}行任务事项不能为空。")
-        if not (0 <= r.rate <= 100):
-            raise ValidationError(f"{section_name} 第{i}行预计完成率必须在 0..100。")
-        if r.rate < 100 and not r.deviation_reason.strip():
-            raise ValidationError(f"{section_name} 第{i}行预计完成率<100，偏差原因必填。")
-        for label, url in [("资产链接", r.asset_url), ("预计成果物链接", r.deliverable_url)]:
-            if url and not URL_RE.match(url):
-                raise ValidationError(f"{section_name} 第{i}行{label}格式非法。")
+    validate_common_rows(rows, section_name, "预计完成率", "预计成果物链接")
+
+
+def ask_rate_and_reason(rate_prompt: str, reason_prompt: str) -> Tuple[int, str]:
+    rate = ask_int(rate_prompt, 0, 100)
+    if rate < 100:
+        return rate, ask(reason_prompt, required=True)
+    return rate, ""
 
 
 def collect_task21(section_name: str, prefills: List[Dict[str, str]] | None = None) -> List[Task21Row]:
@@ -410,10 +423,10 @@ def collect_task21(section_name: str, prefills: List[Dict[str, str]] | None = No
             asset_default = ""
             deliverable_default = ""
 
-        rate = ask_int("完成率(0-100)", 0, 100)
-        deviation_reason = ""
-        if rate < 100:
-            deviation_reason = ask("状态偏差原因(完成率<100必填)", required=True)
+        rate, deviation_reason = ask_rate_and_reason(
+            "完成率(0-100)",
+            "状态偏差原因(完成率<100必填)",
+        )
         dependency = ask("依赖(可空)", default=dependency_default)
         risk = ask("风险(可空)", default=risk_default)
         asset_url = ask_url("设计与执行资产目录链接(可空, 需http/https)", default=asset_default)
@@ -432,10 +445,10 @@ def collect_task31(section_name: str) -> List[Task31Row]:
         print(f"\n{section_name} - 任务{i+1}")
         task_item = ask("任务事项", required=True)
         goal = ask("下周目标说明", required=False)
-        rate = ask_int("预计完成率(0-100)", 0, 100)
-        deviation_reason = ""
-        if rate < 100:
-            deviation_reason = ask("偏差原因(预计完成率<100必填)", required=True)
+        rate, deviation_reason = ask_rate_and_reason(
+            "预计完成率(0-100)",
+            "偏差原因(预计完成率<100必填)",
+        )
         dependency = ask("依赖(可空)")
         risk = ask("风险(可空)")
         expected_deliverable = ask("预计成果物(可空)")
@@ -470,26 +483,13 @@ def collect_list(section_name: str, hint: str) -> List[str]:
 
 
 def sync_latest_develop(repo_root: Path) -> None:
-    def run(cmd: List[str]) -> None:
-        print("$", " ".join(cmd))
-        r = subprocess.run(cmd, cwd=str(repo_root), text=True)
-        if r.returncode != 0:
-            raise ValidationError(f"Git 执行失败：{' '.join(cmd)}")
-
-    run(["git", "fetch", "origin", "develop"])
-    run(["git", "checkout", "develop"])
-    run(["git", "pull", "--rebase", "origin", "develop"])
+    run_cmd(repo_root, ["git", "switch", "develop"], print_cmd=True)
+    run_cmd(repo_root, ["git", "pull", "--rebase", "origin", "develop"], print_cmd=True)
 
 
 def run_git(repo_root: Path, rel_report_path: Path, member_slug: str, week_id: str) -> None:
-    def run(cmd: List[str]) -> None:
-        print("$", " ".join(cmd))
-        r = subprocess.run(cmd, cwd=str(repo_root), text=True)
-        if r.returncode != 0:
-            raise ValidationError(f"Git 执行失败：{' '.join(cmd)}")
-
-    run(["git", "checkout", "develop"])
-    run(["git", "add", str(rel_report_path)])
+    run_cmd(repo_root, ["git", "switch", "develop"], print_cmd=True)
+    run_cmd(repo_root, ["git", "add", str(rel_report_path)], print_cmd=True)
 
     # 若无变更，不再提交
     diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=str(repo_root))
@@ -497,8 +497,8 @@ def run_git(repo_root: Path, rel_report_path: Path, member_slug: str, week_id: s
         print("未检测到可提交改动，跳过提交与推送。")
         return
 
-    run(["git", "commit", "-m", f"kb(weekly_report): update report for {member_slug} {week_id}"])
-    run(["git", "push", "origin", "develop"])
+    run_cmd(repo_root, ["git", "commit", "-m", f"kb(weekly_report): update report for {member_slug} {week_id}"], print_cmd=True)
+    run_cmd(repo_root, ["git", "push", "origin", "develop"], print_cmd=True)
 
 
 def main() -> int:
@@ -529,14 +529,12 @@ def main() -> int:
     if created_new:
         prefill_21, prefill_22 = bootstrap_from_previous_report(repo_root, args.member_slug, week_start)
 
-    print("=" * 72)
-    print("fill_weekly_report 自动化流程")
+    print("\nfill_weekly_report 自动化流程")
     print(f"成员：{member.member_name_zh} ({member.member_slug})")
     print(f"周次：{week_id} / {week_start} ~ {week_end}")
     print(f"目标文件：{rpt}")
     print(f"建档状态：{'新建' if created_new else '已存在'}")
     print(f"自动提交：{'否' if args.no_auto_commit else '是'}")
-    print("=" * 72)
 
     rows_21 = collect_task21("2.1 本周工作总结概述（对内）", prefills=prefill_21)
     rows_22 = collect_task21("2.2 本周工作总结概述（对外）", prefills=prefill_22)
