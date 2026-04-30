@@ -218,7 +218,7 @@ def bootstrap_from_previous_report(repo_root: Path, member_slug: str, week_start
     rows_31 = parse_section_rows(lines, "### 3.1 下周工作计划概述（对内）")
     rows_32 = parse_section_rows(lines, "### 3.2 下周工作计划概述（对外）")
 
-    # 3.x 列结构：任务编号, 任务事项, 下周目标说明, 预计完成率, 依赖, 风险, 预计成果物, 资产链接, 预计成果物链接
+    # 3.x v0.4 列结构：任务编号, 任务事项, 下周目标说明, 预计完成率, 依赖, 风险, 风险等级, 资产链接, 预计成果物链接
     prefill_21: List[Dict[str, str]] = []
     prefill_22: List[Dict[str, str]] = []
 
@@ -308,8 +308,9 @@ def make_rows_21(rows: List[Task21Row]) -> List[str]:
     for i in range(MAX_TASK_ROWS):
         if i < len(rows):
             r = rows[i]
+            risk_level = "低" if not r.risk or r.risk == "无" else "中"
             out.append(
-                "| {no} | {a} | {b} | {c} | {d} | {e} | {f} | {g} | {h} |".format(
+                "| {no} | {a} | {b} | {c} | {d} | {e} | {f} | {g} | {h} | {i} |".format(
                     no=TASK_NAMES[i],
                     a=sanitize(r.task_item),
                     b=sanitize(r.summary),
@@ -317,12 +318,13 @@ def make_rows_21(rows: List[Task21Row]) -> List[str]:
                     d=sanitize(r.deviation_reason),
                     e=sanitize(r.dependency),
                     f=sanitize(r.risk),
-                    g=sanitize(r.asset_url),
-                    h=sanitize(r.deliverable_url),
+                    g=risk_level,
+                    h=sanitize(r.asset_url),
+                    i=sanitize(r.deliverable_url),
                 )
             )
         else:
-            out.append(f"| {TASK_NAMES[i]} |  |  |  |  |  |  |  |  |")
+            out.append(f"| {TASK_NAMES[i]} |  |  |  |  |  |  |  |  |  |")
     return out
 
 
@@ -334,6 +336,7 @@ def make_rows_31(rows: List[Task31Row]) -> List[str]:
             risk = r.risk
             if r.rate < 100:
                 risk = f"偏差原因：{r.deviation_reason}；风险：{risk}" if risk else f"偏差原因：{r.deviation_reason}"
+            risk_level = "低" if not r.risk or r.risk == "无" else "中"
             out.append(
                 "| {no} | {a} | {b} | {c} | {d} | {e} | {f} | {g} | {h} |".format(
                     no=TASK_NAMES[i],
@@ -342,7 +345,7 @@ def make_rows_31(rows: List[Task31Row]) -> List[str]:
                     c=r.rate,
                     d=sanitize(r.dependency),
                     e=sanitize(risk),
-                    f=sanitize(r.expected_deliverable),
+                    f=risk_level,
                     g=sanitize(r.asset_url),
                     h=sanitize(r.deliverable_url),
                 )
@@ -393,44 +396,57 @@ def ask_rate_and_reason(rate_prompt: str, reason_prompt: str) -> Tuple[int, str]
 
 def collect_task21(section_name: str, prefills: List[Dict[str, str]] | None = None) -> List[Task21Row]:
     print(f"\n开始填写 {section_name}")
-    use_prefill = False
     prefills = prefills or []
+    use_prefill = bool(prefills)
     if prefills:
         print(f"检测到上周计划可继承 {len(prefills)} 条。")
-        yn = ask("是否将上周下周计划自动贴到本周计划并逐条更新进度？(Y/n)", default="Y")
+        yn = ask("是否继承这些任务，并逐条只补完成度和必要变更？(Y/n)", default="Y")
         use_prefill = yn.strip().lower() in {"", "y", "yes"}
 
-    n = len(prefills) if use_prefill else ask_int("请输入任务数量(0-3)", 0, 3, 1)
     rows: List[Task21Row] = []
-    for i in range(n):
-        print(f"\n{section_name} - 任务{i+1}")
-        if use_prefill:
-            p = prefills[i]
-            print(f"继承任务事项：{p.get('task_item', '')}")
+    if use_prefill:
+        for i, p in enumerate(prefills[:MAX_TASK_ROWS]):
+            print(f"\n{section_name} - 继承任务{i+1}")
+            print(f"任务事项：{p.get('task_item', '')}")
             if p.get("previous_goal"):
-                print(f"上周计划目标参考：{p.get('previous_goal', '')}")
-            task_item = ask("任务事项", required=True, default=p.get("task_item", ""))
-            summary = ask("本周进度总结", required=False, default="延续上周计划执行，已按实际进展更新。")
-            dependency_default = p.get("previous_dependency", "")
-            risk_default = p.get("previous_risk", "")
-            asset_default = p.get("previous_asset_url", "")
-            deliverable_default = p.get("previous_deliverable_url", "")
-        else:
-            task_item = ask("任务事项", required=True)
-            summary = ask("本周进度总结", required=False)
-            dependency_default = ""
-            risk_default = ""
-            asset_default = ""
-            deliverable_default = ""
+                print(f"上周计划目标：{p.get('previous_goal', '')}")
+            task_item = ask("如需改名请填写；直接回车沿用任务事项", required=True, default=p.get("task_item", ""))
+            summary = ask("本周进度总结", required=False, default=p.get("previous_goal", "延续上周计划执行，已按实际进展更新。"))
+            rate, deviation_reason = ask_rate_and_reason(
+                "完成率(0-100)",
+                "状态偏差原因(完成率<100必填)",
+            )
+            dependency = ask("依赖(直接回车沿用/留空)", default=p.get("previous_dependency", ""))
+            risk = ask("风险(直接回车沿用/留空)", default=p.get("previous_risk", ""))
+            asset_url = ask_url("设计与执行资产目录链接(直接回车沿用/留空)", default=p.get("previous_asset_url", ""))
+            deliverable_url = ask_url("成果物链接(直接回车沿用/留空)", default=p.get("previous_deliverable_url", ""))
+            rows.append(
+                Task21Row(task_item, summary, rate, deviation_reason, dependency, risk, asset_url, deliverable_url)
+            )
 
+        remain = MAX_TASK_ROWS - len(rows)
+        if remain > 0:
+            add_temp = ask(f"本周是否有临时新增任务？最多可追加 {remain} 条 (y/N)", default="N")
+            extra_n = ask_int("请输入临时新增任务数量", 1, remain, 1) if add_temp.strip().lower() in {"y", "yes"} else 0
+        else:
+            print("已达到任务行上限，无法追加临时任务。")
+            extra_n = 0
+    else:
+        extra_n = ask_int("请输入任务数量(0-3)", 0, 3, 1)
+
+    for i in range(extra_n):
+        row_no = len(rows) + 1
+        print(f"\n{section_name} - 新增任务{row_no}")
+        task_item = ask("任务事项", required=True)
+        summary = ask("本周进度总结", required=False)
         rate, deviation_reason = ask_rate_and_reason(
             "完成率(0-100)",
             "状态偏差原因(完成率<100必填)",
         )
-        dependency = ask("依赖(可空)", default=dependency_default)
-        risk = ask("风险(可空)", default=risk_default)
-        asset_url = ask_url("设计与执行资产目录链接(可空, 需http/https)", default=asset_default)
-        deliverable_url = ask_url("成果物链接(可空, 需http/https)", default=deliverable_default)
+        dependency = ask("依赖(可空)")
+        risk = ask("风险(可空)")
+        asset_url = ask_url("设计与执行资产目录链接(可空, 需http/https)")
+        deliverable_url = ask_url("成果物链接(可空, 需http/https)")
         rows.append(
             Task21Row(task_item, summary, rate, deviation_reason, dependency, risk, asset_url, deliverable_url)
         )
@@ -524,16 +540,14 @@ def main() -> int:
     member = load_member(member_registry, args.member_slug)
     rpt, created_new = ensure_report_file(repo_root, member, week_start)
 
-    prefill_21: List[Dict[str, str]] = []
-    prefill_22: List[Dict[str, str]] = []
-    if created_new:
-        prefill_21, prefill_22 = bootstrap_from_previous_report(repo_root, args.member_slug, week_start)
+    prefill_21, prefill_22 = bootstrap_from_previous_report(repo_root, args.member_slug, week_start)
 
     print("\nfill_weekly_report 自动化流程")
     print(f"成员：{member.member_name_zh} ({member.member_slug})")
     print(f"周次：{week_id} / {week_start} ~ {week_end}")
     print(f"目标文件：{rpt}")
     print(f"建档状态：{'新建' if created_new else '已存在'}")
+    print(f"上周计划继承：对内 {len(prefill_21)} 条，对外 {len(prefill_22)} 条")
     print(f"自动提交：{'否' if args.no_auto_commit else '是'}")
 
     rows_21 = collect_task21("2.1 本周工作总结概述（对内）", prefills=prefill_21)
@@ -580,7 +594,7 @@ def main() -> int:
         "- 反馈 ",
         "反馈",
         feedback,
-        "- 反馈 1：本周暂时无反馈。",
+        "- 反馈 1：无",
     )
 
     if member.is_direction_lead == "是":
