@@ -36,6 +36,7 @@ class Task21Row:
     deviation_reason: str
     dependency: str
     risk: str
+    risk_level: str
     asset_url: str
     deliverable_url: str
 
@@ -45,10 +46,9 @@ class Task31Row:
     task_item: str
     goal: str
     rate: int
-    deviation_reason: str
     dependency: str
     risk: str
-    expected_deliverable: str
+    risk_level: str
     asset_url: str
     deliverable_url: str
 
@@ -125,6 +125,17 @@ def ask_url(msg: str, default: str = "") -> str:
         if not v or URL_RE.match(v):
             return v
         print("链接必须是完整 URL（http:// 或 https://）。")
+
+
+def ask_risk_level(msg: str = "风险等级(低/中/高)", default: str = "低") -> str:
+    valid = {"低", "中", "高"}
+    while True:
+        v = ask(msg, required=False, default=default).strip()
+        if not v:
+            v = default
+        if v in valid:
+            return v
+        print("风险等级只能填写：低 / 中 / 高。")
 
 
 def sanitize(v: str) -> str:
@@ -308,7 +319,6 @@ def make_rows_21(rows: List[Task21Row]) -> List[str]:
     for i in range(MAX_TASK_ROWS):
         if i < len(rows):
             r = rows[i]
-            risk_level = "低" if not r.risk or r.risk == "无" else "中"
             out.append(
                 "| {no} | {a} | {b} | {c} | {d} | {e} | {f} | {g} | {h} | {i} |".format(
                     no=TASK_NAMES[i],
@@ -318,7 +328,7 @@ def make_rows_21(rows: List[Task21Row]) -> List[str]:
                     d=sanitize(r.deviation_reason),
                     e=sanitize(r.dependency),
                     f=sanitize(r.risk),
-                    g=risk_level,
+                    g=sanitize(r.risk_level),
                     h=sanitize(r.asset_url),
                     i=sanitize(r.deliverable_url),
                 )
@@ -333,10 +343,6 @@ def make_rows_31(rows: List[Task31Row]) -> List[str]:
     for i in range(MAX_TASK_ROWS):
         if i < len(rows):
             r = rows[i]
-            risk = r.risk
-            if r.rate < 100:
-                risk = f"偏差原因：{r.deviation_reason}；风险：{risk}" if risk else f"偏差原因：{r.deviation_reason}"
-            risk_level = "低" if not r.risk or r.risk == "无" else "中"
             out.append(
                 "| {no} | {a} | {b} | {c} | {d} | {e} | {f} | {g} | {h} |".format(
                     no=TASK_NAMES[i],
@@ -344,8 +350,8 @@ def make_rows_31(rows: List[Task31Row]) -> List[str]:
                     b=sanitize(r.goal),
                     c=r.rate,
                     d=sanitize(r.dependency),
-                    e=sanitize(risk),
-                    f=risk_level,
+                    e=sanitize(r.risk),
+                    f=sanitize(r.risk_level),
                     g=sanitize(r.asset_url),
                     h=sanitize(r.deliverable_url),
                 )
@@ -360,11 +366,13 @@ def validate_common_rows(
     section_name: str,
     rate_label: str,
     deliverable_label: str,
+    require_deviation_reason: bool,
 ) -> None:
     for i, r in enumerate(rows, 1):
         task_item = str(getattr(r, "task_item", "")).strip()
         rate = int(getattr(r, "rate", -1))
         deviation_reason = str(getattr(r, "deviation_reason", "")).strip()
+        risk_level = str(getattr(r, "risk_level", "")).strip()
         asset_url = str(getattr(r, "asset_url", "")).strip()
         deliverable_url = str(getattr(r, "deliverable_url", "")).strip()
 
@@ -372,19 +380,21 @@ def validate_common_rows(
             raise ValidationError(f"{section_name} 第{i}行任务事项不能为空。")
         if not (0 <= rate <= 100):
             raise ValidationError(f"{section_name} 第{i}行{rate_label}必须在 0..100。")
-        if rate < 100 and not deviation_reason:
+        if require_deviation_reason and rate < 100 and not deviation_reason:
             raise ValidationError(f"{section_name} 第{i}行{rate_label}<100，偏差原因必填。")
+        if risk_level not in {"低", "中", "高"}:
+            raise ValidationError(f"{section_name} 第{i}行风险等级只能填写 低/中/高。")
         for label, url in [("资产链接", asset_url), (deliverable_label, deliverable_url)]:
             if url and not URL_RE.match(url):
                 raise ValidationError(f"{section_name} 第{i}行{label}格式非法。")
 
 
 def validate_task21(rows: List[Task21Row], section_name: str) -> None:
-    validate_common_rows(rows, section_name, "完成率", "成果物链接")
+    validate_common_rows(rows, section_name, "完成率", "成果物链接", require_deviation_reason=True)
 
 
 def validate_task31(rows: List[Task31Row], section_name: str) -> None:
-    validate_common_rows(rows, section_name, "预计完成率", "预计成果物链接")
+    validate_common_rows(rows, section_name, "预计完成率", "预计成果物链接", require_deviation_reason=False)
 
 
 def ask_rate_and_reason(rate_prompt: str, reason_prompt: str) -> Tuple[int, str]:
@@ -418,10 +428,12 @@ def collect_task21(section_name: str, prefills: List[Dict[str, str]] | None = No
             )
             dependency = ask("依赖(直接回车沿用/留空)", default=p.get("previous_dependency", ""))
             risk = ask("风险(直接回车沿用/留空)", default=p.get("previous_risk", ""))
+            risk_level_default = "低" if not risk or risk == "无" else "中"
+            risk_level = ask_risk_level("风险等级(低/中/高)", default=risk_level_default)
             asset_url = ask_url("设计与执行资产目录链接(直接回车沿用/留空)", default=p.get("previous_asset_url", ""))
             deliverable_url = ask_url("成果物链接(直接回车沿用/留空)", default=p.get("previous_deliverable_url", ""))
             rows.append(
-                Task21Row(task_item, summary, rate, deviation_reason, dependency, risk, asset_url, deliverable_url)
+                Task21Row(task_item, summary, rate, deviation_reason, dependency, risk, risk_level, asset_url, deliverable_url)
             )
 
         remain = MAX_TASK_ROWS - len(rows)
@@ -445,10 +457,12 @@ def collect_task21(section_name: str, prefills: List[Dict[str, str]] | None = No
         )
         dependency = ask("依赖(可空)")
         risk = ask("风险(可空)")
+        risk_level_default = "低" if not risk or risk == "无" else "中"
+        risk_level = ask_risk_level("风险等级(低/中/高)", default=risk_level_default)
         asset_url = ask_url("设计与执行资产目录链接(可空, 需http/https)")
         deliverable_url = ask_url("成果物链接(可空, 需http/https)")
         rows.append(
-            Task21Row(task_item, summary, rate, deviation_reason, dependency, risk, asset_url, deliverable_url)
+            Task21Row(task_item, summary, rate, deviation_reason, dependency, risk, risk_level, asset_url, deliverable_url)
         )
     return rows
 
@@ -461,13 +475,11 @@ def collect_task31(section_name: str) -> List[Task31Row]:
         print(f"\n{section_name} - 任务{i+1}")
         task_item = ask("任务事项", required=True)
         goal = ask("下周目标说明", required=False)
-        rate, deviation_reason = ask_rate_and_reason(
-            "预计完成率(0-100)",
-            "偏差原因(预计完成率<100必填)",
-        )
+        rate = ask_int("预计完成率(0-100)", 0, 100)
         dependency = ask("依赖(可空)")
         risk = ask("风险(可空)")
-        expected_deliverable = ask("预计成果物(可空)")
+        risk_level_default = "低" if not risk or risk == "无" else "中"
+        risk_level = ask_risk_level("风险等级(低/中/高)", default=risk_level_default)
         asset_url = ask_url("设计与执行资产目录链接(可空, 需http/https)")
         deliverable_url = ask_url("预计成果物链接(可空, 需http/https)")
         rows.append(
@@ -475,10 +487,9 @@ def collect_task31(section_name: str) -> List[Task31Row]:
                 task_item,
                 goal,
                 rate,
-                deviation_reason,
                 dependency,
                 risk,
-                expected_deliverable,
+                risk_level,
                 asset_url,
                 deliverable_url,
             )
@@ -504,7 +515,6 @@ def sync_latest_develop(repo_root: Path) -> None:
 
 
 def run_git(repo_root: Path, rel_report_path: Path, member_slug: str, week_id: str) -> None:
-    run_cmd(repo_root, ["git", "switch", "develop"], print_cmd=True)
     run_cmd(repo_root, ["git", "add", str(rel_report_path)], print_cmd=True)
 
     # 若无变更，不再提交
@@ -594,7 +604,7 @@ def main() -> int:
         "- 反馈 ",
         "反馈",
         feedback,
-        "- 反馈 1：无",
+        "- 反馈 1：",
     )
 
     if member.is_direction_lead == "是":
