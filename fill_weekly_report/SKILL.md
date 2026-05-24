@@ -23,7 +23,8 @@ Use when the user asks to:
 
 - Always ask in Chinese.
 - Ask about one task at a time, not one table cell at a time.
-- For each task, show a suggested filled example before asking for the user's answer.
+- If last week’s plan exists, default to inheriting it before asking for edits; only show a suggested example when inheritance is empty or the user declines.
+- For each task, show a suggested filled example before asking for the user's answer when needed.
 - Treat blank input, `沿用`, `同意`, `可以`, `yes`, `y` as accepting the current suggestion.
 - Treat `无`, `没有`, `n`, `no` as no extra content when the current question allows it.
 - Do not rely on terminal `input()` for user-facing collection. Collect answers in chat, then write the report.
@@ -39,7 +40,7 @@ Use when the user asks to:
 4. Read last week's report for the same member. Preload last week's:
    - `3.1` into this week's `2.1`
    - `3.2` into this week's `2.2`
-5. For each inherited task, ask a single task-level question:
+5. If prefill exists, explicitly state that you will inherit it by default (unless user rejects), then for each inherited task, ask a single task-level question:
    - task name and suggested summary
    - completion rate
    - deviation reason only if rate `<100`

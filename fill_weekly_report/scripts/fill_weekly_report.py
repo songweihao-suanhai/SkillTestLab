@@ -409,9 +409,9 @@ def collect_task21(section_name: str, prefills: List[Dict[str, str]] | None = No
     prefills = prefills or []
     use_prefill = bool(prefills)
     if prefills:
-        print(f"检测到上周计划可继承 {len(prefills)} 条。")
-        yn = ask("是否继承这些任务，并逐条只补完成度和必要变更？(Y/n)", default="Y")
-        use_prefill = yn.strip().lower() in {"", "y", "yes"}
+        print(f"检测到上周计划可继承 {len(prefills)} 条，将默认继承。")
+        yn = ask("如需不继承，请输入 n (直接回车默认继承)", default="")
+        use_prefill = yn.strip().lower() not in {"n", "no"}
 
     rows: List[Task21Row] = []
     if use_prefill:
