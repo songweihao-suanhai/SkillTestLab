@@ -9,6 +9,8 @@ description: Use when the user wants to fill, update, complete, or submit a Tian
 
 Fill Tiangong personal weekly reports by collecting one task at a time in chat. The agent, not the terminal script, owns the conversation: it proposes examples, accepts natural answers such as `同意` / `沿用` / `无` / `100`, previews the final report, then writes or submits it.
 
+Current template version: v0.5. This version is for 硕博团队 personal weekly reports and no longer contains external-facing `2.2` / `3.2` sections.
+
 Default member: `songweihao`. Default repo: `/home/peter/repositories/tiangong`.
 
 ## Trigger
@@ -37,9 +39,7 @@ Use when the user asks to:
 2. Resolve the report path:
    `kb/weekly_report_submission/<YYYY>/<MM>/<week_start>_<week_end>/personal/<member_slug>_weekly_report_<week_start>_<week_end>.md`.
 3. Create the report from `templates/weekly_report_submission/personal_weekly_report_template.md` if it is missing.
-4. Read last week's report for the same member. Preload last week's:
-   - `3.1` into this week's `2.1`
-   - `3.2` into this week's `2.2`
+4. Read last week's report for the same member. Preload last week's `3.1` into this week's `2.1`.
 5. If prefill exists, explicitly state that you will inherit it by default (unless user rejects), then for each inherited task, ask a single task-level question:
    - task name and suggested summary
    - completion rate
@@ -47,19 +47,20 @@ Use when the user asks to:
    - dependency/risk/risk level/links only if they differ from the suggestion
 6. Ask whether there were temporary new tasks this week. Collect each new task in the same task-level format.
 7. Ask for next week's internal tasks. Offer polished example wording from the user's rough task title.
-8. Ask whether next week's external tasks should mirror internal tasks. If yes, copy them directly.
-9. Ask for experience/retrospective and SuanhaiOS feedback; retrospective may be `无`, while SuanhaiOS feedback should stay blank when there is no feedback.
-10. Generate a preview of the changed report sections and ask for confirmation.
-11. After confirmation, write only editable data blocks.
-12. If the original intent was submission, run the minimal submit path: `git add <report>`, `git commit`, and `git push origin develop`.
-13. Do not print or relay verbose command transcripts unless a Git command fails or the user explicitly asks for command output.
+8. Ask for experience/retrospective and SuanhaiOS feedback; retrospective may be `无`, while SuanhaiOS feedback should stay blank when there is no feedback.
+9. Generate a preview of the changed report sections and ask for confirmation.
+10. After confirmation, write only editable data blocks.
+11. If the original intent was submission, run the minimal submit path: `git add <report>`, `git commit`, and `git push origin develop`.
+12. Do not print or relay verbose command transcripts unless a Git command fails or the user explicitly asks for command output.
 
 ## Current Template Columns
 
-For v0.4 weekly reports, keep these table shapes exactly:
+For v0.5 weekly reports, keep these table shapes exactly:
 
-- `2.1` / `2.2`: `任务编号 | 任务事项 | 本周进度总结 | 完成率(0-100) | 状态偏差原因 | 依赖 | 风险 | 风险等级 | 设计与执行资产目录链接 | 成果物链接`
-- `3.1` / `3.2`: `任务编号 | 任务事项 | 下周目标说明 | 预计完成率(0-100) | 依赖 | 风险 | 风险等级 | 设计与执行资产目录链接 | 预计成果物链接`
+- `2.1`: `任务编号 | 任务事项 | 本周进度总结 | 完成率(0-100) | 状态偏差原因 | 依赖 | 风险 | 风险等级 | 设计与执行资产目录链接 | 成果物链接`
+- `3.1`: `任务编号 | 任务事项 | 下周目标说明 | 预计完成率(0-100) | 依赖 | 风险 | 风险等级 | 设计与执行资产目录链接 | 预计成果物链接`
+
+Do not create, require, or write `2.2 本周工作总结概述（对外）` or `3.2 下周工作计划概述（对外）`; these sections were removed in v0.5.
 
 Risk level must be `低`, `中`, or `高`; default to `低` when the user reports no risk, otherwise confirm whether it is `中` or `高`.
 
@@ -67,10 +68,9 @@ Risk level must be `低`, `中`, or `高`; default to `低` when the user report
 
 - Task item is required for every non-empty row.
 - Completion rate and expected completion rate must be integers in `0..100`.
-- Any `2.1` / `2.2` rate below `100` requires a deviation reason.
-- `2.2` and `3.2` must each contain at least one valid task.
+- Any `2.1` rate below `100` requires a deviation reason.
 - Non-empty URL fields must start with `http://` or `https://`.
 
 ## Write Boundary
 
-Only edit task rows in `2.1`, `2.2`, `3.1`, `3.2`, bullet rows in `2.3`, feedback rows in `4`, and direction-lead rows in `5` when applicable. Do not edit file names, section titles, table headers, basic info, explanatory blockquotes, or appendix history.
+Only edit task rows in `2.1` and `3.1`, bullet rows in `2.3`, feedback rows in `4`, and direction-lead rows in `5` when applicable. Do not edit file names, section titles, table headers, basic info, explanatory blockquotes, or appendix history.

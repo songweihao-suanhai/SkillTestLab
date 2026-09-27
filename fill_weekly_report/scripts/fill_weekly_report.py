@@ -220,18 +220,16 @@ def parse_section_rows(lines: List[str], section_title: str) -> List[List[str]]:
     return rows
 
 
-def bootstrap_from_previous_report(repo_root: Path, member_slug: str, week_start: dt.date) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+def bootstrap_from_previous_report(repo_root: Path, member_slug: str, week_start: dt.date) -> List[Dict[str, str]]:
     prev = previous_week_report_path(repo_root, member_slug, week_start)
     if not prev.exists():
-        return [], []
+        return []
 
     lines = prev.read_text(encoding="utf-8").splitlines()
     rows_31 = parse_section_rows(lines, "### 3.1 下周工作计划概述（对内）")
-    rows_32 = parse_section_rows(lines, "### 3.2 下周工作计划概述（对外）")
 
-    # 3.x v0.4 列结构：任务编号, 任务事项, 下周目标说明, 预计完成率, 依赖, 风险, 风险等级, 资产链接, 预计成果物链接
+    # 3.1 v0.5 列结构：任务编号, 任务事项, 下周目标说明, 预计完成率, 依赖, 风险, 风险等级, 资产链接, 预计成果物链接
     prefill_21: List[Dict[str, str]] = []
-    prefill_22: List[Dict[str, str]] = []
 
     for cells in rows_31:
         if len(cells) >= 2 and cells[1].strip():
@@ -246,20 +244,7 @@ def bootstrap_from_previous_report(repo_root: Path, member_slug: str, week_start
                 }
             )
 
-    for cells in rows_32:
-        if len(cells) >= 2 and cells[1].strip():
-            prefill_22.append(
-                {
-                    "task_item": cells[1].strip(),
-                    "previous_goal": cells[2].strip() if len(cells) > 2 else "",
-                    "previous_dependency": cells[4].strip() if len(cells) > 4 else "",
-                    "previous_risk": cells[5].strip() if len(cells) > 5 else "",
-                    "previous_asset_url": cells[7].strip() if len(cells) > 7 else "",
-                    "previous_deliverable_url": cells[8].strip() if len(cells) > 8 else "",
-                }
-            )
-
-    return prefill_21[:MAX_TASK_ROWS], prefill_22[:MAX_TASK_ROWS]
+    return prefill_21[:MAX_TASK_ROWS]
 
 
 def find_line_index(lines: List[str], start: int, prefix: str) -> int:
@@ -550,21 +535,19 @@ def main() -> int:
     member = load_member(member_registry, args.member_slug)
     rpt, created_new = ensure_report_file(repo_root, member, week_start)
 
-    prefill_21, prefill_22 = bootstrap_from_previous_report(repo_root, args.member_slug, week_start)
+    prefill_21 = bootstrap_from_previous_report(repo_root, args.member_slug, week_start)
 
     print("\nfill_weekly_report 自动化流程")
     print(f"成员：{member.member_name_zh} ({member.member_slug})")
     print(f"周次：{week_id} / {week_start} ~ {week_end}")
     print(f"目标文件：{rpt}")
     print(f"建档状态：{'新建' if created_new else '已存在'}")
-    print(f"上周计划继承：对内 {len(prefill_21)} 条，对外 {len(prefill_22)} 条")
+    print(f"上周计划继承：对内 {len(prefill_21)} 条")
     print(f"自动提交：{'否' if args.no_auto_commit else '是'}")
 
     rows_21 = collect_task21("2.1 本周工作总结概述（对内）", prefills=prefill_21)
-    rows_22 = collect_task21("2.2 本周工作总结概述（对外）", prefills=prefill_22)
     exp = collect_list("2.3 本周经验总结与复盘", "请输入每条经验；直接回车结束。")
     rows_31 = collect_task31("3.1 下周工作计划概述（对内）")
-    rows_32 = collect_task31("3.2 下周工作计划概述（对外）")
     feedback = collect_list("四、对 SuanhaiOS 系统使用的反馈", "请输入每条反馈；无反馈可直接回车。")
 
     lead_judgement: List[str] = []
@@ -576,18 +559,10 @@ def main() -> int:
         lead_focus = collect_list("5.3 下周方向级推进重点", "请输入每条重点；回车结束。")
 
     validate_task21(rows_21, "2.1")
-    validate_task21(rows_22, "2.2")
     validate_task31(rows_31, "3.1")
-    validate_task31(rows_32, "3.2")
-
-    if not any(x.task_item.strip() for x in rows_22):
-        raise ValidationError("硬性校验失败：2.2 至少 1 行有效任务。")
-    if not any(x.task_item.strip() for x in rows_32):
-        raise ValidationError("硬性校验失败：3.2 至少 1 行有效任务。")
 
     lines = rpt.read_text(encoding="utf-8").splitlines()
     lines = replace_table_rows(lines, "### 2.1 本周工作总结概述（对内）", make_rows_21(rows_21))
-    lines = replace_table_rows(lines, "### 2.2 本周工作总结概述（对外）", make_rows_21(rows_22))
     lines = replace_bullets(
         lines,
         "### 2.3 本周经验总结与复盘",
@@ -597,7 +572,6 @@ def main() -> int:
         "- 经验 / 复盘 1：",
     )
     lines = replace_table_rows(lines, "### 3.1 下周工作计划概述（对内）", make_rows_31(rows_31))
-    lines = replace_table_rows(lines, "### 3.2 下周工作计划概述（对外）", make_rows_31(rows_32))
     lines = replace_bullets(
         lines,
         "## 四、对 SuanhaiOS 系统使用的反馈",
